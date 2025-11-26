@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Optional
 
 class CustomIgLM(nn.Module, IgLM):
     """
@@ -17,10 +18,11 @@ class CustomIgLM(nn.Module, IgLM):
         model_name: str = "IgLM",
         chain_token: str = "[HEAVY]",
         iglm_species: str = "[HUMAN]",
-        iglm_temp: float = 1.0,
-        cdr_positions: list = None,
-        cdr_lengths: list = None,
-        starting_binder_seq: str = None,
+        ablm_temp: float = 1.0,
+        is_scfv: bool = False,
+        vh_first: bool = True,
+        vh_len: Optional[int] = None,
+        vl_len: Optional[int] = None,
         device: torch.device = None, 
         seed: int = 0,
     ):
@@ -45,13 +47,12 @@ class CustomIgLM(nn.Module, IgLM):
         
         self.chain_token = chain_token
         self.species_token = iglm_species
-        self.cdr_positions = cdr_positions
-        self.cdr_lengths = cdr_lengths
-        # zero out gradients except cdr positions
-
-        self.starting_binder_seq = starting_binder_seq
-            
-        self.tau = iglm_temp
+        self.is_scfv = is_scfv
+        self.vh_first = vh_first
+        self.vh_len = vh_len
+        self.vl_len = vl_len
+        
+        self.tau = ablm_temp
 
         self.amino_acids = ['A','R','N','D','C','Q','E','G','H','I','L','K','M','F','P','S','T','W','Y','V']
         
@@ -62,10 +63,6 @@ class CustomIgLM(nn.Module, IgLM):
                 raise ValueError(f"Unrecognized amino acid token: {aa}")
             aa_ids.append(tid)
         self.amino_acid_ids = torch.tensor(aa_ids, device=self.device)
-
-        self.starting_binder_seq_tokens = [
-            self.tokenizer.convert_tokens_to_ids(aa) for aa in self.starting_binder_seq
-        ]
 
         self.chain_id = self.tokenizer.convert_tokens_to_ids(chain_token)
         self.species_id = self.tokenizer.convert_tokens_to_ids(self.species_token)
@@ -138,7 +135,7 @@ class CustomIgLM(nn.Module, IgLM):
         full_grad = torch.autograd.grad(ce_loss, seq_logits)[0]
         return full_grad.detach(), ll
 
-    def get_iglm_grad(self, seq) -> np.ndarray:
+    def get_ablm_grad(self, seq) -> np.ndarray:
         # If seq is provided as a dict with logits, extract the tensor.
         if isinstance(seq, dict):
             current_logits = torch.tensor(seq["logits"][0], device=self.device, requires_grad=True)
